@@ -1,0 +1,13 @@
+node_modules/
+.firebase/
+*-debug.log
+.env.local
+.env.*.local
+
+# Configuração local de ferramentas (contém token)
+.mcp.json
+
+# Chave de assinatura do APK (nunca versionar)
+key.properties
+*.jks
+*.keystore

@@ -1,0 +1,68 @@
+rules_version = '2';
+
+// Circuito de Descobertas — regras de acesso do Cloud Firestore.
+//
+// - Administrador: usuário autenticado cujo UID tem um documento em admins/{uid}
+//   (criado manualmente no console; ninguém escreve nessa coleção pelo app).
+// - Visitante: sessão anônima do app Flutter.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    function admin() {
+      return autenticado()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function estandeValido() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['nome', 'descricao', 'localizacao', 'ativo', 'criadoEm', 'atualizadoEm'])
+        && d.keys().hasAll(['nome', 'descricao', 'localizacao', 'ativo'])
+        && d.nome is string && d.nome.size() > 0 && d.nome.size() <= 80
+        && d.descricao is string && d.descricao.size() <= 300
+        && d.localizacao is string && d.localizacao.size() <= 80
+        && d.ativo is bool;
+    }
+
+    // Lista de administradores: cada um só consegue ler o próprio registro.
+    match /admins/{uid} {
+      allow read: if autenticado() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // Estandes: somente administradores alteram.
+    // Visitantes autenticados consultam apenas estandes ativos.
+    match /estandes/{estandeId} {
+      // `resource == null` permite ao app descobrir que um ID não existe
+      // (QR inválido) sem expor estandes inativos.
+      allow get: if admin()
+        || (autenticado() && (resource == null || resource.data.ativo == true));
+      // Consultas de visitantes precisam filtrar where('ativo', '==', true).
+      allow list: if admin() || (autenticado() && resource.data.ativo == true);
+      allow create, update: if admin() && estandeValido();
+      allow delete: if admin();
+    }
+
+    // Check-ins: ID composto "{uid}_{estandeId}" garante uma visita por
+    // visitante e por estande (uma segunda gravação seria um update, negado).
+    match /checkins/{checkinId} {
+      allow get: if admin()
+        || (autenticado() && checkinId.matches(request.auth.uid + '_.+'));
+      allow list: if admin()
+        || (autenticado() && resource.data.visitanteId == request.auth.uid);
+
+      allow create: if autenticado()
+        && request.resource.data.keys().hasOnly(['visitanteId', 'estandeId', 'criadoEm'])
+        && request.resource.data.visitanteId == request.auth.uid
+        && request.resource.data.estandeId is string
+        && checkinId == request.auth.uid + '_' + request.resource.data.estandeId
+        && request.resource.data.criadoEm == request.time
+        && get(/databases/$(database)/documents/estandes/$(request.resource.data.estandeId)).data.ativo == true;
+
+      allow update, delete: if false;
+    }
+  }
+}
